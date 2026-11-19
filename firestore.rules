@@ -1,0 +1,281 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.firebase.sign_in_provider != 'anonymous';
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function userDocExists(userId) {
+      return exists(/databases/$(database)/documents/users/$(userId));
+    }
+
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll([
+          'uid',
+          'displayName',
+          'email',
+          'hasCompletedOnboarding',
+          'defaultMonthlyBudget',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid',
+          'displayName',
+          'email',
+          'hasCompletedOnboarding',
+          'defaultMonthlyBudget',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.uid == userId
+        && isValidId(data.uid)
+        && data.displayName is string
+        && data.displayName.size() >= 1
+        && data.displayName.size() <= 80
+        && data.email is string
+        && data.email.size() >= 3
+        && data.email.size() <= 160
+        && data.hasCompletedOnboarding is bool
+        && data.defaultMonthlyBudget is number
+        && data.defaultMonthlyBudget >= 0
+        && data.defaultMonthlyBudget <= 1000000000
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidMonthlyBudget(data, userId, monthId) {
+      return data.keys().hasAll([
+          'uid',
+          'id',
+          'monthLabel',
+          'year',
+          'totalDays',
+          'currentDay',
+          'monthlyBudget',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid',
+          'id',
+          'monthLabel',
+          'year',
+          'totalDays',
+          'currentDay',
+          'monthlyBudget',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.uid == userId
+        && isValidId(data.uid)
+        && data.id == monthId
+        && isValidId(data.id)
+        && data.id.size() >= 7
+        && data.id.size() <= 20
+        && data.monthLabel is string
+        && data.monthLabel.size() >= 3
+        && data.monthLabel.size() <= 20
+        && data.year is number
+        && data.year >= 2000
+        && data.year <= 2100
+        && data.totalDays is number
+        && data.totalDays >= 28
+        && data.totalDays <= 31
+        && data.currentDay is number
+        && data.currentDay >= 1
+        && data.currentDay <= 31
+        && data.monthlyBudget is number
+        && data.monthlyBudget >= 0
+        && data.monthlyBudget <= 1000000000
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidMovement(data, userId, movementId) {
+      return data.keys().hasAll([
+          'uid',
+          'id',
+          'monthId',
+          'kind',
+          'day',
+          'dateLabel',
+          'fullDateLabel',
+          'timeLabel',
+          'category',
+          'concept',
+          'amount',
+          'createdAtMs',
+          'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'uid',
+          'id',
+          'monthId',
+          'kind',
+          'day',
+          'dateLabel',
+          'fullDateLabel',
+          'timeLabel',
+          'category',
+          'concept',
+          'amount',
+          'createdAtMs',
+          'createdAt',
+          'updatedAt',
+          'notes',
+          'isoDate',
+          'paymentMethod'
+        ])
+        && data.uid == userId
+        && isValidId(data.uid)
+        && data.id == movementId
+        && isValidId(data.id)
+        && data.monthId is string
+        && data.monthId.size() >= 7
+        && data.monthId.size() <= 20
+        && data.monthId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.kind in ['expense', 'income']
+        && data.day is number
+        && data.day >= 1
+        && data.day <= 31
+        && data.dateLabel is string
+        && data.dateLabel.size() >= 1
+        && data.dateLabel.size() <= 40
+        && data.fullDateLabel is string
+        && data.fullDateLabel.size() >= 1
+        && data.fullDateLabel.size() <= 80
+        && data.timeLabel is string
+        && data.timeLabel.size() >= 1
+        && data.timeLabel.size() <= 10
+        && data.category is string
+        && data.category.size() >= 1
+        && data.category.size() <= 60
+        && data.concept is string
+        && data.concept.size() >= 1
+        && data.concept.size() <= 140
+        && data.amount is number
+        && data.amount > 0
+        && data.amount <= 1000000000
+        && data.createdAtMs is number
+        && data.createdAtMs > 0
+        && data.createdAt is timestamp
+        && (!('updatedAt' in data) || data.updatedAt is timestamp)
+        && (!('notes' in data) || (data.notes is string && data.notes.size() <= 500))
+        && (!('isoDate' in data) || (data.isoDate is string && data.isoDate.size() <= 20))
+        && (!('paymentMethod' in data) || (data.paymentMethod is string && data.paymentMethod.size() <= 40));
+    }
+
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if false;
+      allow create: if isOwner(userId)
+        && isValidId(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isOwner(userId)
+        && isValidId(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'hasCompletedOnboarding',
+          'defaultMonthlyBudget',
+          'displayName',
+          'updatedAt'
+        ]);
+      allow delete: if false;
+
+      match /months/{monthId} {
+        allow get: if isOwner(userId)
+          && isValidId(monthId)
+          && (resource == null || existing().uid == request.auth.uid);
+        allow list: if isOwner(userId)
+          && existing().uid == request.auth.uid;
+        allow create: if isOwner(userId)
+          && isValidId(monthId)
+          && isValidMonthlyBudget(incoming(), userId, monthId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && userDocExists(userId);
+        allow update: if isOwner(userId)
+          && isValidId(monthId)
+          && isValidMonthlyBudget(incoming(), userId, monthId)
+          && incoming().uid == existing().uid
+          && incoming().id == existing().id
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && userDocExists(userId)
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'monthlyBudget',
+            'currentDay',
+            'updatedAt'
+          ]);
+        allow delete: if false;
+      }
+
+      match /movements/{movementId} {
+        allow get: if isOwner(userId)
+          && isValidId(movementId)
+          && (resource == null || existing().uid == request.auth.uid);
+        allow list: if isOwner(userId)
+          && existing().uid == request.auth.uid;
+        allow create: if isOwner(userId)
+          && isValidId(movementId)
+          && isValidMovement(incoming(), userId, movementId)
+          && incoming().createdAt == request.time
+          && userDocExists(userId);
+        allow update: if isOwner(userId)
+          && isValidId(movementId)
+          && isValidMovement(incoming(), userId, movementId)
+          && incoming().uid == existing().uid
+          && incoming().id == existing().id
+          && incoming().monthId == existing().monthId
+          && incoming().kind == existing().kind
+          && incoming().createdAtMs == existing().createdAtMs
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && userDocExists(userId)
+          && (
+            (existing().kind == 'expense' && incoming().diff(existing()).affectedKeys().hasOnly([
+              'amount',
+              'category',
+              'concept',
+              'day',
+              'dateLabel',
+              'fullDateLabel',
+              'notes',
+              'updatedAt'
+            ]))
+          );
+        allow delete: if isOwner(userId)
+          && isValidId(movementId)
+          && existing().uid == request.auth.uid
+          && userDocExists(userId);
+      }
+    }
+  }
+}

@@ -1,0 +1,192 @@
+/**
+ * Security Rules Specification Verification (Dirty Dozen Test Matrix)
+ * Verifies that every adversarial payload violates the Firestore security invariants.
+ */
+
+export interface SecurityTestCase {
+  id: number;
+  name: string;
+  operation: 'get' | 'list' | 'create' | 'update' | 'delete';
+  path: string;
+  authUid: string | null;
+  payload?: Record<string, unknown>;
+  expected: 'PERMISSION_DENIED';
+}
+
+export const DIRTY_DOZEN_CASES: SecurityTestCase[] = [
+  {
+    id: 1,
+    name: 'Unauthenticated profile read',
+    operation: 'get',
+    path: '/users/userA',
+    authUid: null,
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 2,
+    name: 'Cross-user profile read',
+    operation: 'get',
+    path: '/users/userA',
+    authUid: 'userB',
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 3,
+    name: 'Global users list enumeration',
+    operation: 'list',
+    path: '/users',
+    authUid: 'userA',
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 4,
+    name: 'Identity spoofing on profile create',
+    operation: 'create',
+    path: '/users/userA',
+    authUid: 'userA',
+    payload: {
+      uid: 'userB',
+      displayName: 'Mallory',
+      email: 'mallory@example.com',
+      hasCompletedOnboarding: false,
+      defaultMonthlyBudget: 2500000,
+    },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 5,
+    name: 'Shadow field privilege escalation on profile create',
+    operation: 'create',
+    path: '/users/userA',
+    authUid: 'userA',
+    payload: {
+      uid: 'userA',
+      displayName: 'Alice',
+      email: 'alice@example.com',
+      hasCompletedOnboarding: true,
+      defaultMonthlyBudget: 2500000,
+      isAdmin: true,
+    },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 6,
+    name: 'Forged client timestamp on profile create',
+    operation: 'create',
+    path: '/users/userA',
+    authUid: 'userA',
+    payload: {
+      uid: 'userA',
+      displayName: 'Alice',
+      email: 'alice@example.com',
+      hasCompletedOnboarding: true,
+      defaultMonthlyBudget: 2500000,
+      createdAt: '2020-01-01T00:00:00Z',
+      updatedAt: '2020-01-01T00:00:00Z',
+    },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 7,
+    name: 'Orphaned month write without parent user doc',
+    operation: 'create',
+    path: '/users/userA/months/2026-11',
+    authUid: 'userA',
+    payload: {
+      uid: 'userA',
+      id: '2026-11',
+      monthLabel: 'Noviembre',
+      year: 2026,
+      totalDays: 30,
+      currentDay: 17,
+      monthlyBudget: 2500000,
+    },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 8,
+    name: 'Cross-user movements list query',
+    operation: 'list',
+    path: '/users/userA/movements',
+    authUid: 'userB',
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 9,
+    name: 'Path ID poisoning on movement create',
+    operation: 'create',
+    path: '/users/userA/movements/invalid$id!',
+    authUid: 'userA',
+    payload: {
+      uid: 'userA',
+      id: 'invalid$id!',
+      monthId: '2026-11',
+      kind: 'expense',
+      day: 17,
+      dateLabel: 'Hoy',
+      fullDateLabel: 'Martes, 17 de noviembre de 2026',
+      timeLabel: '10:00',
+      category: 'Alimentación',
+      concept: 'Almuerzo',
+      amount: 25000,
+      createdAtMs: 1700000000000,
+    },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 10,
+    name: 'Negative amount on movement create',
+    operation: 'create',
+    path: '/users/userA/movements/mov-neg-1',
+    authUid: 'userA',
+    payload: {
+      uid: 'userA',
+      id: 'mov-neg-1',
+      monthId: '2026-11',
+      kind: 'expense',
+      day: 17,
+      dateLabel: 'Hoy',
+      fullDateLabel: 'Martes, 17 de noviembre de 2026',
+      timeLabel: '10:00',
+      category: 'Alimentación',
+      concept: 'Prueba negativa',
+      amount: -5000,
+      createdAtMs: 1700000000000,
+    },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 11,
+    name: 'Oversized concept string (>140 chars)',
+    operation: 'create',
+    path: '/users/userA/movements/mov-big-1',
+    authUid: 'userA',
+    payload: {
+      uid: 'userA',
+      id: 'mov-big-1',
+      monthId: '2026-11',
+      kind: 'expense',
+      day: 17,
+      dateLabel: 'Hoy',
+      fullDateLabel: 'Martes, 17 de noviembre de 2026',
+      timeLabel: '10:00',
+      category: 'Alimentación',
+      concept: 'A'.repeat(200),
+      amount: 15000,
+      createdAtMs: 1700000000000,
+    },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 12,
+    name: 'Immutable createdAt mutation on month update',
+    operation: 'update',
+    path: '/users/userA/months/2026-11',
+    authUid: 'userA',
+    payload: {
+      createdAt: '2020-01-01T00:00:00Z',
+      monthlyBudget: 3000000,
+    },
+    expected: 'PERMISSION_DENIED',
+  },
+];
